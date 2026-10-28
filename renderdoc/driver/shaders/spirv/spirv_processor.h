@@ -373,6 +373,8 @@ struct DataType
   const Vector &vector() const { return basicType.vector; }
   const Matrix &matrix() const { return basicType; }
   Id InnerType() const { return pointerType.baseId; }
+  // untyped pointers (SPV_KHR_untyped_pointers) are pointers with no pointee type
+  bool IsUntypedPointer() const { return type == Type::PointerType && pointerType.baseId == Id(); }
   bool IsU32() const
   {
     return type == Type::ScalarType && basicType.vector.scalar.width == 32 &&
@@ -476,11 +478,18 @@ struct EntryPoint
 struct Variable
 {
   Variable() = default;
-  Variable(Id t, Id i, StorageClass s, Id init) : type(t), id(i), storage(s), initializer(init) {}
+  Variable(Id t, Id i, StorageClass s, Id init, Id data = Id())
+      : type(t), id(i), storage(s), initializer(init), untypedDataType(data)
+  {
+  }
   Id type;
   Id id;
   StorageClass storage;
   Id initializer;
+  // for variables declared with OpUntypedVariableKHR, the type is an untyped pointer and this is
+  // the optional data type of the variable. For normal variables this is empty and the data type is
+  // the pointer's inner type.
+  Id untypedDataType;
 
   bool operator<(const Variable &o) const
   {
@@ -490,13 +499,16 @@ struct Variable
       return type < o.type;
     if(storage != o.storage)
       return storage < o.storage;
-    return initializer < o.initializer;
+    if(initializer != o.initializer)
+      return initializer < o.initializer;
+    return untypedDataType < o.untypedDataType;
   }
 
   bool operator!=(const Variable &o) const { return !operator==(o); }
   bool operator==(const Variable &o) const
   {
-    return id == o.id && type == o.type && storage == o.storage && initializer == o.initializer;
+    return id == o.id && type == o.type && storage == o.storage && initializer == o.initializer &&
+           untypedDataType == o.untypedDataType;
   }
 };
 
@@ -590,6 +602,14 @@ public:
   }
   const Decorations &GetDecorations(Id id) const { return decorations[id]; };
   const rdcarray<uint32_t> &GetSPIRV() const { return m_SPIRV; }
+  // returns the type of the data a global variable points to. For untyped variables this may be
+  // empty if no data type was specified
+  Id GetVariableDataType(const Variable &var) const
+  {
+    if(var.untypedDataType != Id())
+      return var.untypedDataType;
+    return GetDataType(var.type).InnerType();
+  }
 protected:
   bool Parse(rdcarray<uint32_t> &&spirvWords);
   bool Parse(const void *spirvWords, size_t byteSize);

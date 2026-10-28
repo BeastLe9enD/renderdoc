@@ -1785,8 +1785,8 @@ static void AddTaskShaderPayloadStores(const rdcarray<SpecConstant> &specInfo,
     }
 
     // skip past any local variables
-    while(it.opcode() == rdcspv::Op::Variable || it.opcode() == rdcspv::Op::Line ||
-          it.opcode() == rdcspv::Op::NoLine)
+    while(it.opcode() == rdcspv::Op::Variable || it.opcode() == rdcspv::Op::UntypedVariableKHR ||
+          it.opcode() == rdcspv::Op::Line || it.opcode() == rdcspv::Op::NoLine)
       ++it;
 
     editor.AddOperations(it, locationCalculate);
@@ -2691,8 +2691,8 @@ static void AddMeshShaderOutputStores(const ShaderReflection &refl,
     }
 
     // skip past any local variables
-    while(it.opcode() == rdcspv::Op::Variable || it.opcode() == rdcspv::Op::Line ||
-          it.opcode() == rdcspv::Op::NoLine)
+    while(it.opcode() == rdcspv::Op::Variable || it.opcode() == rdcspv::Op::UntypedVariableKHR ||
+          it.opcode() == rdcspv::Op::Line || it.opcode() == rdcspv::Op::NoLine)
       ++it;
 
     editor.AddOperations(it, locationCalculate);
@@ -2862,7 +2862,10 @@ static void AddMeshShaderOutputStores(const ShaderReflection &refl,
 
         if(!(store.memoryAccess.flags & rdcspv::MemoryAccess::Aligned))
         {
-          const rdcspv::DataType &pointeeDataType = editor.GetDataType(ptrDataType.InnerType());
+          // untyped pointers have no pointee type, so use the type of the stored object instead
+          const rdcspv::DataType &pointeeDataType =
+              editor.GetDataType(ptrDataType.IsUntypedPointer() ? editor.GetIDType(store.object)
+                                                                : ptrDataType.InnerType());
 
           // for structs, we align them to 16 bytes, scalar/vector types are aligned to the scalar size
           if(pointeeDataType.scalar().type == rdcspv::Op::Max)

@@ -321,6 +321,9 @@
     <ClCompile Include="vk\vk_triangle_fan.cpp">
       <Filter>Vulkan\demos</Filter>
     </ClCompile>
+    <ClCompile Include="vk\vk_untyped_pointers.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
     <ClCompile Include="vk\vk_spirv_13_shaders.cpp">
       <Filter>Vulkan\demos</Filter>
     </ClCompile>

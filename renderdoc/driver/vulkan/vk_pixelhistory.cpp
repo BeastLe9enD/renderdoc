@@ -614,8 +614,9 @@ private:
             }
 
             // skip past any local variables
-            while(it.opcode() == rdcspv::Op::Variable || it.opcode() == rdcspv::Op::Line ||
-                  it.opcode() == rdcspv::Op::NoLine)
+            while(it.opcode() == rdcspv::Op::Variable ||
+                  it.opcode() == rdcspv::Op::UntypedVariableKHR ||
+                  it.opcode() == rdcspv::Op::Line || it.opcode() == rdcspv::Op::NoLine)
               ++it;
 
             // give the umax a new result each time
@@ -676,16 +677,18 @@ private:
             break;
           }
           case rdcspv::Op::CopyMemory:
+          case rdcspv::Op::CopyMemorySized:
           case rdcspv::Op::AtomicStore:
           case rdcspv::Op::Store:
           {
             rdcspv::Id pointer = rdcspv::Id::fromWord(it.word(1));
             rdcspv::Id pointerType = editor.GetIDType(pointer);
             RDCASSERT(pointerType != rdcspv::Id());
-            rdcspv::Iter pointerTypeIt = editor.GetID(pointerType);
-            rdcspv::OpTypePointer ptr(pointerTypeIt);
-            if(ptr.storageClass == rdcspv::StorageClass::Uniform ||
-               ptr.storageClass == rdcspv::StorageClass::StorageBuffer)
+            // the pointer may be typed or untyped, so look at the processed type rather than
+            // decoding the type declaration directly
+            const rdcspv::DataType &ptr = editor.GetDataType(pointerType);
+            if(ptr.pointerType.storage == rdcspv::StorageClass::Uniform ||
+               ptr.pointerType.storage == rdcspv::StorageClass::StorageBuffer)
             {
               editor.Remove(it);
               modified = true;

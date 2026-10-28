@@ -399,7 +399,8 @@ rdcstr Reflector::Disassemble(const rdcstr &entryPoint, const rdcarray<SpecConst
         case Op::TypeSampledImage:
         case Op::TypeFunction:
         case Op::TypeRuntimeArray:
-        case Op::TypeRayQueryKHR: continue;
+        case Op::TypeRayQueryKHR:
+        case Op::TypeUntypedPointerKHR: continue;
 
         case Op::TypeForwardPointer:
         {
@@ -645,6 +646,23 @@ rdcstr Reflector::Disassemble(const rdcstr &entryPoint, const rdcarray<SpecConst
           if(decoded.storageClass != StorageClass::Function)
             ret += ToStr(decoded.storageClass) + " ";
           ret += declName(decoded.resultType, decoded.result);
+          if(decoded.HasInitializer())
+            ret += " = " + idName(decoded.initializer);
+          ret += getDecorationString(decorations[decoded.result]);
+          break;
+        }
+        case Op::UntypedVariableKHR:
+        {
+          OpUntypedVariableKHR decoded(it);
+          ret += indent;
+          if(decoded.storageClass != StorageClass::Function)
+            ret += ToStr(decoded.storageClass) + " ";
+          // if we have a data type declare it as an untyped variable of that type, otherwise just
+          // declare the plain untyped pointer
+          if(decoded.HasDataType())
+            ret += "untyped " + declName(decoded.dataType, decoded.result);
+          else
+            ret += declName(decoded.resultType, decoded.result);
           if(decoded.HasInitializer())
             ret += " = " + idName(decoded.initializer);
           ret += getDecorationString(decorations[decoded.result]);
@@ -1622,26 +1640,52 @@ rdcstr Reflector::Disassemble(const rdcstr &entryPoint, const rdcarray<SpecConst
         }
         case Op::AccessChain:
         case Op::InBoundsAccessChain:
+        case Op::UntypedAccessChainKHR:
+        case Op::UntypedInBoundsAccessChainKHR:
         {
-          OpAccessChain decoded(it);
+          const DataType *type = NULL;
+          rdcarray<Id> indexes;
+          Id result;
           ret += indent;
-          ret += declName(decoded.resultType, decoded.result);
-          ret += " = &" + idName(decoded.base);
 
-          const DataType *type = &dataTypes[idTypes[decoded.base]];
+          if(it.opcode() == Op::UntypedAccessChainKHR ||
+             it.opcode() == Op::UntypedInBoundsAccessChainKHR)
+          {
+            // the untyped access chains are identical in layout, so we decode both as one
+            OpUntypedAccessChainKHR decoded(it);
+            ret += declName(decoded.resultType, decoded.result);
 
-          // base should be a pointer
-          RDCASSERT(type->type == DataType::PointerType);
-          type = &dataTypes[type->InnerType()];
+            // the base is untyped so display it as a cast to the base type
+            ret += " = &(" + declName(decoded.baseType, Id()) + ")" + idName(decoded.base);
+
+            type = &dataTypes[decoded.baseType];
+            indexes = decoded.indexes;
+            result = decoded.result;
+          }
+          else
+          {
+            OpAccessChain decoded(it);
+            ret += declName(decoded.resultType, decoded.result);
+            ret += " = &" + idName(decoded.base);
+
+            type = &dataTypes[idTypes[decoded.base]];
+
+            // base should be a pointer
+            RDCASSERT(type->type == DataType::PointerType);
+            type = &dataTypes[type->InnerType()];
+
+            indexes = decoded.indexes;
+            result = decoded.result;
+          }
 
           size_t i = 0;
-          for(; i < decoded.indexes.size(); i++)
+          for(; i < indexes.size(); i++)
           {
             int32_t idx = -1;
 
             // if it's a constant, get its value
-            if(constants.find(decoded.indexes[i]) != constants.end())
-              idx = EvaluateConstant(decoded.indexes[i], specInfo).value.s32v[0];
+            if(constants.find(indexes[i]) != constants.end())
+              idx = EvaluateConstant(indexes[i], specInfo).value.s32v[0];
 
             // if it's a struct we must have an OpConstant to use, if it's a vector and we did get a
             // constant then do better than a basic array index syntax.
@@ -1656,7 +1700,7 @@ rdcstr Reflector::Disassemble(const rdcstr &entryPoint, const rdcarray<SpecConst
               RDCASSERT(type->type == DataType::ArrayType || type->type == DataType::MatrixType ||
                             type->type == DataType::VectorType,
                         (uint32_t)type->type);
-              ret += StringFormat::Fmt("[%s]", idName(decoded.indexes[i]).c_str());
+              ret += StringFormat::Fmt("[%s]", idName(indexes[i]).c_str());
             }
 
             if(type->type == DataType::ArrayType || type->type == DataType::MatrixType ||
@@ -1671,7 +1715,7 @@ rdcstr Reflector::Disassemble(const rdcstr &entryPoint, const rdcarray<SpecConst
             }
           }
 
-          ret += getDecorationString(decorations[decoded.result]);
+          ret += getDecorationString(decorations[result]);
           break;
         }
 
