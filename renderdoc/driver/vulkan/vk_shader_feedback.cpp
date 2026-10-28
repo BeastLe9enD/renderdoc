@@ -979,8 +979,8 @@ void AnnotateShader(const ShaderReflection &refl, const SPIRVPatchData &patchDat
     }
 
     // skip past any local variables
-    while(it.opcode() == rdcspv::Op::Variable || it.opcode() == rdcspv::Op::Line ||
-          it.opcode() == rdcspv::Op::NoLine)
+    while(it.opcode() == rdcspv::Op::Variable || it.opcode() == rdcspv::Op::UntypedVariableKHR ||
+          it.opcode() == rdcspv::Op::Line || it.opcode() == rdcspv::Op::NoLine)
       ++it;
 
     if(funcId == entryID)
@@ -1346,22 +1346,45 @@ void AnnotateShader(const ShaderReflection &refl, const SPIRVPatchData &patchDat
       }
 
       // if we see an access chain of a variable we're snooping, save out the result
-      if(it.opcode() == rdcspv::Op::AccessChain || it.opcode() == rdcspv::Op::InBoundsAccessChain)
+      if(it.opcode() == rdcspv::Op::AccessChain || it.opcode() == rdcspv::Op::InBoundsAccessChain ||
+         it.opcode() == rdcspv::Op::UntypedAccessChainKHR ||
+         it.opcode() == rdcspv::Op::UntypedInBoundsAccessChainKHR)
       {
-        rdcspv::OpAccessChain chain(it);
-        chain.op = it.opcode();
+        rdcspv::Id base;
+        rdcarray<rdcspv::Id> indexes;
+        bool indexesDescriptorArray = true;
+
+        if(it.opcode() == rdcspv::Op::UntypedAccessChainKHR ||
+           it.opcode() == rdcspv::Op::UntypedInBoundsAccessChainKHR)
+        {
+          // both untyped access chains have the same layout
+          rdcspv::OpUntypedAccessChainKHR chain(it);
+          base = chain.base;
+          indexes = chain.indexes;
+
+          // untyped access chains declare the base type explicitly. The first index only selects
+          // the descriptor if the chain is indexing into the array of descriptors.
+          indexesDescriptorArray =
+              editor.GetDataType(chain.baseType).type == rdcspv::DataType::ArrayType;
+        }
+        else
+        {
+          rdcspv::OpAccessChain chain(it);
+          base = chain.base;
+          indexes = chain.indexes;
+        }
 
         // is this a var we want to snoop?
-        auto varIt = varLookup.find(chain.base);
-        if(varIt != varLookup.end())
+        auto varIt = varLookup.find(base);
+        if(varIt != varLookup.end() && indexesDescriptorArray)
         {
           // multi-dimensional arrays of descriptors is not allowed - however an access chain could
           // be longer than 5 words (1 index). Think of the case of a uniform buffer where the first
           // index goes into the descriptor array, and further indices go inside the uniform buffer
           // members.
-          RDCASSERT(chain.indexes.size() >= 1, chain.indexes.size());
+          RDCASSERT(indexes.size() >= 1, indexes.size());
 
-          rdcspv::Id index = chain.indexes[0];
+          rdcspv::Id index = indexes[0];
 
           // patch after the access chain
           it++;

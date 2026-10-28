@@ -356,6 +356,7 @@
     <ClCompile Include="vk\vk_template.cpp" />
     <ClCompile Include="vk\vk_texture_zoo.cpp" />
     <ClCompile Include="vk\vk_triangle_fan.cpp" />
+    <ClCompile Include="vk\vk_untyped_pointers.cpp" />
     <ClCompile Include="vk\vk_buffer_truncation.cpp" />
     <ClCompile Include="vk\vk_validation_use.cpp" />
     <ClCompile Include="vk\vk_vertex_attr_zoo.cpp" />

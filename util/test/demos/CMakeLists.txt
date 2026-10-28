@@ -174,6 +174,7 @@ set(VULKAN_SRC
         vk/vk_sync2.cpp
         vk/vk_texture_zoo.cpp
         vk/vk_triangle_fan.cpp
+        vk/vk_untyped_pointers.cpp
         vk/vk_validation_use.cpp
         vk/vk_vertex_attr_zoo.cpp
         vk/vk_video_textures.cpp

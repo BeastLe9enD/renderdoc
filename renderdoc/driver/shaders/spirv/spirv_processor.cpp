@@ -689,6 +689,19 @@ void Processor::RegisterOp(Iter it)
     if(decoded.storageClass == StorageClass::Workgroup)
       m_ThreadScope |= ThreadScope::Workgroup;
   }
+  else if(opdata.op == Op::UntypedVariableKHR)
+  {
+    OpUntypedVariableKHR decoded(it);
+
+    // only register global variables here. The result type is an untyped pointer, so we store the
+    // optional data type separately
+    if(decoded.storageClass != rdcspv::StorageClass::Function)
+      globals.push_back(Variable(decoded.resultType, decoded.result, decoded.storageClass,
+                                 decoded.initializer, decoded.dataType));
+
+    if(decoded.storageClass == StorageClass::Workgroup)
+      m_ThreadScope |= ThreadScope::Workgroup;
+  }
   else if(opdata.op == Op::ConstantNull)
   {
     OpConstantNull decoded(it);
@@ -870,6 +883,12 @@ void Processor::RegisterOp(Iter it)
     OpTypePointer decoded(it);
     dataTypes[opdata.result] = DataType(opdata.result, Pointer(decoded.type, decoded.storageClass));
   }
+  else if(opdata.op == Op::TypeUntypedPointerKHR)
+  {
+    OpTypeUntypedPointerKHR decoded(it);
+    // untyped pointers have no inner type
+    dataTypes[opdata.result] = DataType(opdata.result, Pointer(Id(), decoded.storageClass));
+  }
   else if(opdata.op == Op::TypeArray)
   {
     OpTypeArray decoded(it);
@@ -1024,7 +1043,7 @@ void Processor::UnregisterOp(Iter it)
       }
     }
   }
-  else if(opdata.op == Op::Variable)
+  else if(opdata.op == Op::Variable || opdata.op == Op::UntypedVariableKHR)
   {
     Id result = opdata.result;
 
@@ -1045,10 +1064,10 @@ void Processor::UnregisterOp(Iter it)
     specConstants.erase(opdata.result);
   }
   else if(opdata.op == Op::TypeVoid || opdata.op == Op::TypeBool || opdata.op == Op::TypeInt ||
-          opdata.op == Op::TypeFloat || opdata.op == Op::TypeVector ||
-          opdata.op == Op::TypeMatrix || opdata.op == Op::TypeStruct || opdata.op == Op::TypeArray ||
-          opdata.op == Op::TypePointer || opdata.op == Op::TypeRuntimeArray ||
-          opdata.op == Op::TypeRayQueryKHR || opdata.op == Op::TypeAccelerationStructureKHR)
+          opdata.op == Op::TypeFloat || opdata.op == Op::TypeVector || opdata.op == Op::TypeMatrix ||
+          opdata.op == Op::TypeStruct || opdata.op == Op::TypeArray || opdata.op == Op::TypePointer ||
+          opdata.op == Op::TypeRuntimeArray || opdata.op == Op::TypeRayQueryKHR ||
+          opdata.op == Op::TypeAccelerationStructureKHR || opdata.op == Op::TypeUntypedPointerKHR)
   {
     dataTypes[opdata.result] = DataType();
   }

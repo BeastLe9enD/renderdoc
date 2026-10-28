@@ -629,21 +629,26 @@ void Reflector::RegisterOp(Iter it)
 
     memberNames.push_back({memberName.type, memberName.member, memberName.name});
   }
-  else if(opdata.op == Op::Variable)
+  else if(opdata.op == Op::Variable || opdata.op == Op::UntypedVariableKHR)
   {
-    OpVariable var(it);
+    Id result = opdata.result;
+    Id varType;
 
-    // variables are always pointers
-    Id varType = dataTypes[var.resultType].InnerType();
+    // variables are always pointers. Untyped variables declare their data type separately, which is
+    // optional
+    if(opdata.op == Op::UntypedVariableKHR)
+      varType = OpUntypedVariableKHR(it).dataType;
+    else
+      varType = dataTypes[opdata.resultType].InnerType();
 
     // if we don't have a name for this variable but it's a pointer to a struct that is named then
     // give the variable a name based on the type. This is a common pattern in GLSL for global
     // blocks, and since the variable is how we access commonly we should give it a recognisable
     // name.
-    if(strings[var.result].empty() && dataTypes[varType].type == DataType::StructType &&
-       !strings[varType].empty())
+    if(varType != Id() && strings[result].empty() &&
+       dataTypes[varType].type == DataType::StructType && !strings[varType].empty())
     {
-      strings[var.result] = strings[varType] + "_var";
+      strings[result] = strings[varType] + "_var";
     }
   }
   else if(opdata.op == Op::ModuleProcessed)
@@ -950,7 +955,9 @@ void Reflector::PostParse()
   // with higher IDs
   for(auto it = dataTypes.begin(); it != dataTypes.end(); ++it)
   {
-    if(it->second.type == DataType::PointerType && it->second.name.empty())
+    if(it->second.IsUntypedPointer() && it->second.name.empty())
+      it->second.name = "void*";
+    else if(it->second.type == DataType::PointerType && it->second.name.empty())
       it->second.name = StringFormat::Fmt("%s*", dataTypes[it->second.InnerType()].name.c_str());
   }
 
@@ -1286,7 +1293,7 @@ void Reflector::MakeReflection(const GraphicsAPI sourceAPI, const ShaderStage st
   // to easily match pointer types itself
   for(auto it = dataTypes.begin(); it != dataTypes.end(); ++it)
   {
-    if(it->second.type == DataType::PointerType &&
+    if(it->second.type == DataType::PointerType && !it->second.IsUntypedPointer() &&
        it->second.pointerType.storage == rdcspv::StorageClass::PhysicalStorageBuffer)
     {
       pointerTypes.insert(std::make_pair(it->first, (uint16_t)pointerTypes.size()));
@@ -1300,7 +1307,7 @@ void Reflector::MakeReflection(const GraphicsAPI sourceAPI, const ShaderStage st
       // variable type must be a pointer of the same storage class
       RDCASSERT(dataTypes[global.type].type == DataType::PointerType);
       RDCASSERT(dataTypes[global.type].pointerType.storage == global.storage);
-      const DataType &baseType = dataTypes[dataTypes[global.type].InnerType()];
+      const DataType &baseType = dataTypes[GetVariableDataType(global)];
 
       const bool isInput = (global.storage == StorageClass::Input);
 
@@ -1463,7 +1470,21 @@ void Reflector::MakeReflection(const GraphicsAPI sourceAPI, const ShaderStage st
       RDCASSERT(dataTypes[global.type].type == DataType::PointerType);
       RDCASSERT(dataTypes[global.type].pointerType.storage == global.storage);
 
-      const DataType *varType = &dataTypes[dataTypes[global.type].InnerType()];
+      Id varTypeId = GetVariableDataType(global);
+
+      // untyped variables don't have to declare a data type. Without one there's no layout to
+      // reflect, so skip the variable entirely. Builtins such as descriptor heaps are expected to
+      // have no data type so don't warn about those.
+      if(varTypeId == Id())
+      {
+        if(usedIds.find(global.id) != usedIds.end() &&
+           !(decorations[global.id].flags & Decorations::HasBuiltIn))
+          RDCWARN("Skipping untyped %s variable %u with no data type",
+                  ToStr(global.storage).c_str(), global.id.value());
+        continue;
+      }
+
+      const DataType *varType = &dataTypes[varTypeId];
 
       // if the outer type is an array, get the length and peel it off.
       uint32_t arraySize = 1;
@@ -2281,6 +2302,10 @@ void Reflector::MakeConstantBlockVariable(ShaderConstant &outConst,
       outConst.type.rows = 1;
       outConst.type.columns = 1;
       outConst.type.name = curType->name;
+
+      // untyped pointers have no pointee type to describe, so they are just plain addresses
+      if(curType->IsUntypedPointer())
+        return;
 
       // try to insert the inner type ID into the map. If it succeeds, it gets the next available
       // pointer type index (size of the map), if not then we just get the previously added index
