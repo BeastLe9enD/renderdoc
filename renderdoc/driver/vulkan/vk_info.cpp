@@ -1128,6 +1128,8 @@ void VulkanCreationInfo::ShaderObject::Init(VulkanResourceManager *resourceMan,
 
   shad.entryPoint = pCreateInfo->pName;
 
+  shad.InitHeapMappings(pCreateInfo);
+
   // descriptor set layouts
   if(pCreateInfo->pSetLayouts)
   {
@@ -1186,6 +1188,51 @@ void VulkanCreationInfo::ShaderObject::Init(VulkanResourceManager *resourceMan,
     setLayoutInfos.push_back(&info.m_DescSetLayout[setLayout]);
 
   ProcessStaticDescriptorAccess(resourceMan, shad.refl, id, staticDescriptorAccess, setLayoutInfos);
+}
+
+void VulkanCreationInfo::ShaderEntry::InitHeapMappings(const void *stageInfo)
+{
+  heapMappings.clear();
+  heapEmbeddedSamplers.clear();
+
+  const VkShaderDescriptorSetAndBindingMappingInfoEXT *mappingInfo =
+      (const VkShaderDescriptorSetAndBindingMappingInfoEXT *)FindNextStruct(
+          (const VkBaseInStructure *)stageInfo,
+          VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT);
+  if(!mappingInfo)
+    return;
+
+  heapMappings.assign(mappingInfo->pMappings, mappingInfo->mappingCount);
+
+  for(VkDescriptorSetAndBindingMappingEXT &mapping : heapMappings)
+  {
+    mapping.pNext = NULL;
+
+    // replace the embedded sampler pointer with a 1-based index into our own storage
+    const VkSamplerCreateInfo **embeddedSampler = GetEmbeddedSampler(mapping);
+    if(*embeddedSampler)
+    {
+      heapEmbeddedSamplers.push_back(**embeddedSampler);
+      heapEmbeddedSamplers.back().pNext = NULL;
+      *embeddedSampler = (const VkSamplerCreateInfo *)(uintptr_t)heapEmbeddedSamplers.size();
+    }
+  }
+}
+
+void VulkanCreationInfo::ShaderEntry::GetHeapMappings(
+    rdcarray<VkDescriptorSetAndBindingMappingEXT> &mappings) const
+{
+  mappings = heapMappings;
+
+  for(VkDescriptorSetAndBindingMappingEXT &mapping : mappings)
+  {
+    const VkSamplerCreateInfo **embeddedSampler = GetEmbeddedSampler(mapping);
+    if(*embeddedSampler)
+    {
+      uintptr_t idx = (uintptr_t)*embeddedSampler - 1;
+      *embeddedSampler = &heapEmbeddedSamplers[idx];
+    }
+  }
 }
 
 void VulkanCreationInfo::Pipeline::Init(VulkanResourceManager *resourceMan,
@@ -1333,6 +1380,8 @@ void VulkanCreationInfo::Pipeline::Init(VulkanResourceManager *resourceMan,
             VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO);
     if(subgroupSize)
       shad.requiredSubgroupSize = subgroupSize->requiredSubgroupSize;
+
+    shad.InitHeapMappings(&pCreateInfo->pStages[i]);
 
     shad.module = shadid;
     shad.entryPoint = pCreateInfo->pStages[i].pName;
@@ -2024,6 +2073,8 @@ void VulkanCreationInfo::Pipeline::Init(VulkanResourceManager *resourceMan, Vulk
             VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO);
     if(subgroupSize)
       shad.requiredSubgroupSize = subgroupSize->requiredSubgroupSize;
+
+    shad.InitHeapMappings(&pCreateInfo->stage);
 
     shad.module = shadid;
     shad.entryPoint = pCreateInfo->stage.pName;
@@ -3210,6 +3261,13 @@ void VulkanCreationInfo::AccelerationStructure::Init(
 
 const VulkanCreationInfo::PipelineLayout &VulkanCreationInfo::GetPipelineLayoutInfo(ResourceId rp) const
 {
+  // pipelines and shaders using VK_EXT_descriptor_heap don't have a layout
+  if(rp == ResourceId())
+  {
+    static PipelineLayout emptyLayout;
+    return emptyLayout;
+  }
+
   auto it = m_PipelineLayout.find(rp);
   RDCASSERT(it != m_PipelineLayout.end());
   return it->second;

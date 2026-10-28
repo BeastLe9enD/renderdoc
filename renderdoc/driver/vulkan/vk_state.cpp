@@ -413,6 +413,36 @@ void VulkanRenderState::BindDescriptorBuffers(WrappedVulkan *vk, VkCommandBuffer
   }
 }
 
+void VulkanRenderState::BindDescriptorHeaps(WrappedVulkan *vk, VkCommandBuffer cmd)
+{
+  if(samplerHeap.bound)
+  {
+    VkBindHeapInfoEXT bind = {VK_STRUCTURE_TYPE_BIND_HEAP_INFO_EXT};
+    bind.heapRange = samplerHeap.heapRange;
+    bind.reservedRangeOffset = samplerHeap.reservedRangeOffset;
+    bind.reservedRangeSize = samplerHeap.reservedRangeSize;
+    ObjDisp(cmd)->CmdBindSamplerHeapEXT(Unwrap(cmd), &bind);
+  }
+
+  if(resourceHeap.bound)
+  {
+    VkBindHeapInfoEXT bind = {VK_STRUCTURE_TYPE_BIND_HEAP_INFO_EXT};
+    bind.heapRange = resourceHeap.heapRange;
+    bind.reservedRangeOffset = resourceHeap.reservedRangeOffset;
+    bind.reservedRangeSize = resourceHeap.reservedRangeSize;
+    ObjDisp(cmd)->CmdBindResourceHeapEXT(Unwrap(cmd), &bind);
+  }
+
+  if(!pushData.empty())
+  {
+    VkPushDataInfoEXT push = {VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT};
+    push.offset = 0;
+    push.data.address = pushData.data();
+    push.data.size = pushData.size();
+    ObjDisp(cmd)->CmdPushDataEXT(Unwrap(cmd), &push);
+  }
+}
+
 void VulkanRenderState::BindPipeline(WrappedVulkan *vk, VkCommandBuffer cmd,
                                      PipelineBinding binding, bool subpass0)
 {
@@ -424,6 +454,7 @@ void VulkanRenderState::BindPipeline(WrappedVulkan *vk, VkCommandBuffer cmd,
     subpass0 = false;
 
   BindDescriptorBuffers(vk, cmd);
+  BindDescriptorHeaps(vk, cmd);
 
   if(binding == BindGraphics || binding == BindInitial)
   {
@@ -527,6 +558,7 @@ void VulkanRenderState::BindShaderObjects(WrappedVulkan *vk, VkCommandBuffer cmd
                                           PipelineBinding binding)
 {
   BindDescriptorBuffers(vk, cmd);
+  BindDescriptorHeaps(vk, cmd);
 
   if(binding == BindGraphics || binding == BindInitial)
   {

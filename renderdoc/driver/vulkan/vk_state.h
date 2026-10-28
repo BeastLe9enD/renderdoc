@@ -112,6 +112,7 @@ struct VulkanRenderState
   void BindPipeline(WrappedVulkan *vk, VkCommandBuffer cmd, PipelineBinding binding, bool subpass0);
 
   void BindDescriptorBuffers(WrappedVulkan *vk, VkCommandBuffer cmd);
+  void BindDescriptorHeaps(WrappedVulkan *vk, VkCommandBuffer cmd);
 
   void BindShaderObjects(WrappedVulkan *vk, VkCommandBuffer cmd, PipelineBinding binding);
   void BindDynamicState(WrappedVulkan *vk, VkCommandBuffer cmd);
@@ -235,6 +236,19 @@ struct VulkanRenderState
     ResourceId pushBuffer;
   };
   rdcarray<DescriptorBuffer> descBufs;
+
+  // VK_EXT_descriptor_heap state
+  struct DescriptorHeap
+  {
+    bool bound = false;
+    VkDeviceAddressRangeEXT heapRange = {};
+    VkDeviceSize reservedRangeOffset = 0;
+    VkDeviceSize reservedRangeSize = 0;
+  };
+  DescriptorHeap samplerHeap, resourceHeap;
+
+  // push data. Only the bytes up to the highest offset that has been pushed are stored
+  bytebuf pushData;
 
   struct IdxBuffer
   {

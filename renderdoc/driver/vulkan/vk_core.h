@@ -61,7 +61,7 @@ struct VkInitParams
   uint64_t GetSerialiseSize();
 
   // check if a frame capture section version is supported
-  static const uint64_t CurrentVersion = 0x20;
+  static const uint64_t CurrentVersion = 0x21;
   static bool IsSupportedVersion(uint64_t ver);
 };
 
@@ -430,6 +430,12 @@ private:
   };
 
   VkPhysicalDeviceDescriptorBufferPropertiesEXT m_DescriptorBufferProperties;
+  VkPhysicalDeviceDescriptorHeapPropertiesEXT m_DescriptorHeapProperties;
+
+  // custom border colours registered with VK_EXT_descriptor_heap, by index. On replay this is
+  // used to re-register indices that are registered more than once.
+  Threading::CriticalSection m_CustomBorderColorLock;
+  rdcflatmap<uint32_t, VkSamplerCustomBorderColorCreateInfoEXT> m_CustomBorderColors;
 
   Threading::CriticalSection m_ASLookupByAddrLock;
   rdcflatmap<VkDeviceAddress, ResourceId> m_ASLookupByAddr;
@@ -546,6 +552,7 @@ private:
   bool m_Maintenance6 = false;
   bool m_Maintenance9 = false;
   bool m_DescriptorBuffers = false;
+  bool m_DescriptorHeaps = false;
   bool m_MultiviewPerViewViewports = false;
   uint32_t m_PreciseFMAMask = 0;
 
@@ -1533,6 +1540,12 @@ public:
   bool Maintenance6() const { return m_Maintenance6; }
   bool Maintenance9() const { return m_Maintenance9; }
   bool DescriptorBuffers() const { return m_DescriptorBuffers; }
+  bool DescriptorHeaps() const { return m_DescriptorHeaps; }
+  // returns true if the pipeline or shader objects bound in this state use VK_EXT_descriptor_heap
+  bool UsesDescriptorHeap(const VulkanRenderState &state, bool compute);
+  // with either descriptor buffers or descriptor heaps, descriptors are opaque bytes stored in
+  // memory that can reference any resource without us being able to track it
+  bool DescriptorsInMemory() const { return m_DescriptorBuffers || m_DescriptorHeaps; }
   bool MultiViewGeometryShaders() const { return m_MultiViewGeometryShaders; }
   bool MultiviewPerViewViewports() const { return m_MultiviewPerViewViewports; }
   uint32_t PreciseFMAMask() const { return m_PreciseFMAMask; }
@@ -1555,13 +1568,21 @@ public:
 
   uint32_t DescriptorDataSize(VkDescriptorType type);
 
+  // usage bits for buffers that need to be bindable to memory used for descriptors
+  VkBufferUsageFlags DescriptorMemoryBufferUsage()
+  {
+    return (DescriptorBuffers() ? VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT : 0) |
+           (DescriptorHeaps() ? VK_BUFFER_USAGE_DESCRIPTOR_HEAP_BIT_EXT : 0);
+  }
   VkBufferCreateFlags DefaultBufferCreateFlags()
   {
     return DescriptorBuffers() ? VK_BUFFER_CREATE_DESCRIPTOR_BUFFER_CAPTURE_REPLAY_BIT_EXT : 0;
   }
   VkImageCreateFlags DefaultImageCreateFlags()
   {
-    return DescriptorBuffers() ? VK_IMAGE_CREATE_DESCRIPTOR_BUFFER_CAPTURE_REPLAY_BIT_EXT : 0;
+    // VK_IMAGE_CREATE_DESCRIPTOR_BUFFER_CAPTURE_REPLAY_BIT_EXT is an alias of
+    // VK_IMAGE_CREATE_DESCRIPTOR_HEAP_CAPTURE_REPLAY_BIT_EXT
+    return DescriptorsInMemory() ? VK_IMAGE_CREATE_DESCRIPTOR_HEAP_CAPTURE_REPLAY_BIT_EXT : 0;
   }
   VkImageViewCreateFlags DefaultImageViewCreateFlags()
   {
@@ -3285,6 +3306,28 @@ public:
   IMPLEMENT_FUNCTION_SERIALISED(void, vkCmdBindDescriptorBufferEmbeddedSamplersEXT,
                                 VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint,
                                 VkPipelineLayout layout, uint32_t set);
+
+  // VK_EXT_descriptor_heap
+  VkResult vkWriteSamplerDescriptorsEXT(VkDevice device, uint32_t samplerCount,
+                                        const VkSamplerCreateInfo *pSamplers,
+                                        const VkHostAddressRangeEXT *pDescriptors);
+  VkResult vkWriteResourceDescriptorsEXT(VkDevice device, uint32_t resourceCount,
+                                         const VkResourceDescriptorInfoEXT *pResources,
+                                         const VkHostAddressRangeEXT *pDescriptors);
+  IMPLEMENT_FUNCTION_SERIALISED(void, vkCmdBindSamplerHeapEXT, VkCommandBuffer commandBuffer,
+                                const VkBindHeapInfoEXT *pBindInfo);
+  IMPLEMENT_FUNCTION_SERIALISED(void, vkCmdBindResourceHeapEXT, VkCommandBuffer commandBuffer,
+                                const VkBindHeapInfoEXT *pBindInfo);
+  IMPLEMENT_FUNCTION_SERIALISED(void, vkCmdPushDataEXT, VkCommandBuffer commandBuffer,
+                                const VkPushDataInfoEXT *pPushDataInfo);
+  VkResult vkGetImageOpaqueCaptureDataEXT(VkDevice device, uint32_t imageCount,
+                                          const VkImage *pImages, VkHostAddressRangeEXT *pDatas);
+  VkDeviceSize vkGetPhysicalDeviceDescriptorSizeEXT(VkPhysicalDevice physicalDevice,
+                                                    VkDescriptorType descriptorType);
+  IMPLEMENT_FUNCTION_SERIALISED(VkResult, vkRegisterCustomBorderColorEXT, VkDevice device,
+                                const VkSamplerCustomBorderColorCreateInfoEXT *pBorderColor,
+                                VkBool32 requestIndex, uint32_t *pIndex);
+  void vkUnregisterCustomBorderColorEXT(VkDevice device, uint32_t index);
 
   // VK_KHR_map_memory2
   IMPLEMENT_FUNCTION_SERIALISED(VkResult, vkMapMemory2, VkDevice device,

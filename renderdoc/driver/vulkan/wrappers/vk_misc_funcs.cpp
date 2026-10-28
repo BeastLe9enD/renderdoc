@@ -431,9 +431,9 @@ void WrappedVulkan::vkDestroyImage(VkDevice device, VkImage obj, const VkAllocat
   if(obj == VK_NULL_HANDLE)
     return;
 
-  // with descriptor buffers, extend the lifespan of images to ensure descriptors don't falsely
-  // alias
-  if(DescriptorBuffers())
+  // with descriptor buffers or heaps, extend the lifespan of images to ensure descriptors don't
+  // falsely alias
+  if(DescriptorsInMemory())
   {
     SCOPED_READLOCK(m_CapTransitionLock);
     SCOPED_LOCK(m_DeferredDestructLock);
@@ -1346,7 +1346,7 @@ VkResult WrappedVulkan::vkCreateRenderPass(VkDevice device, const VkRenderPassCr
 
   // descriptor buffers intercepts all swapchain images during capture so we change any
   // reference to PRESENT layout into GENERAL since that's what is valid for our image
-  if(DescriptorBuffers())
+  if(DescriptorsInMemory())
   {
     byte *tempMem = GetTempMemory(GetNextPatchSize(patchedCreateInfo.pNext));
     CopyNextChainForPatching("VkRenderPassCreateInfo", tempMem,
@@ -1606,7 +1606,7 @@ VkResult WrappedVulkan::vkCreateRenderPass2(VkDevice device,
 
   // descriptor buffers intercepts all swapchain images during capture so we change any
   // reference to PRESENT layout into GENERAL since that's what is valid for our image
-  if(DescriptorBuffers())
+  if(DescriptorsInMemory())
   {
     byte *tempMem = GetTempMemory(GetNextPatchSize(patchedCreateInfo.pNext));
     CopyNextChainForPatching("VkRenderPassCreateInfo2", tempMem,
@@ -3325,6 +3325,97 @@ void WrappedVulkan::vkDestroyDeferredOperationKHR(VkDevice device, VkDeferredOpe
   return ObjDisp(device)->DestroyDeferredOperationKHR(Unwrap(device), operation, NULL);
 }
 
+template <typename SerialiserType>
+bool WrappedVulkan::Serialise_vkRegisterCustomBorderColorEXT(
+    SerialiserType &ser, VkDevice device, const VkSamplerCustomBorderColorCreateInfoEXT *pBorderColor,
+    VkBool32 requestIndex, uint32_t *pIndex)
+{
+  SERIALISE_ELEMENT(device);
+  SERIALISE_ELEMENT_LOCAL(BorderColor, *pBorderColor).Important();
+  SERIALISE_ELEMENT(requestIndex);
+  SERIALISE_ELEMENT_LOCAL(Index, *pIndex).Important();
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
+  {
+    // the same index can be registered multiple times over the lifetime of the program as it's
+    // unregistered and re-used. Unregister any previous registration before registering again.
+    {
+      SCOPED_LOCK(m_CustomBorderColorLock);
+      if(m_CustomBorderColors.find(Index) != m_CustomBorderColors.end())
+      {
+        ObjDisp(device)->UnregisterCustomBorderColorEXT(Unwrap(device), Index);
+        m_CustomBorderColors.erase(Index);
+      }
+    }
+
+    byte *tempMem = GetTempMemory(GetNextPatchSize(&BorderColor));
+    VkSamplerCustomBorderColorCreateInfoEXT *unwrappedInfo =
+        UnwrapStructAndChain(m_State, tempMem, &BorderColor);
+
+    // always request the index that was used at capture time, since it's baked into descriptors
+    uint32_t replayIndex = Index;
+    VkResult vkr = ObjDisp(device)->RegisterCustomBorderColorEXT(Unwrap(device), unwrappedInfo,
+                                                                 VK_TRUE, &replayIndex);
+
+    if(vkr != VK_SUCCESS || replayIndex != Index)
+    {
+      SET_ERROR_RESULT(m_FailedReplayResult, ResultCode::APIReplayFailed,
+                       "Failed registering custom border color at index %u, VkResult: %s", Index,
+                       ToStr(vkr).c_str());
+      return false;
+    }
+
+    {
+      SCOPED_LOCK(m_CustomBorderColorLock);
+      m_CustomBorderColors[Index] = BorderColor;
+      m_CustomBorderColors[Index].pNext = NULL;
+    }
+  }
+
+  return true;
+}
+
+VkResult WrappedVulkan::vkRegisterCustomBorderColorEXT(
+    VkDevice device, const VkSamplerCustomBorderColorCreateInfoEXT *pBorderColor,
+    VkBool32 requestIndex, uint32_t *pIndex)
+{
+  byte *tempMem = GetTempMemory(GetNextPatchSize(pBorderColor));
+  VkSamplerCustomBorderColorCreateInfoEXT *unwrappedInfo =
+      UnwrapStructAndChain(m_State, tempMem, pBorderColor);
+
+  VkResult ret;
+  SERIALISE_TIME_CALL(ret = ObjDisp(device)->RegisterCustomBorderColorEXT(
+                          Unwrap(device), unwrappedInfo, requestIndex, pIndex));
+
+  if(ret == VK_SUCCESS && IsCaptureMode(m_State))
+  {
+    Chunk *chunk = NULL;
+
+    {
+      CACHE_THREAD_SERIALISER();
+
+      SCOPED_SERIALISE_CHUNK(VulkanChunk::vkRegisterCustomBorderColorEXT);
+      Serialise_vkRegisterCustomBorderColorEXT(ser, device, pBorderColor, requestIndex, pIndex);
+
+      chunk = scope.Get();
+    }
+
+    // registrations are device-wide state that must be replayed before anything that uses the
+    // index, so store them with the device
+    GetRecord(device)->AddChunk(chunk);
+  }
+
+  return ret;
+}
+
+void WrappedVulkan::vkUnregisterCustomBorderColorEXT(VkDevice device, uint32_t index)
+{
+  // we don't need to serialise this, on replay we re-register indices as needed
+  ObjDisp(device)->UnregisterCustomBorderColorEXT(Unwrap(device), index);
+}
+
 INSTANTIATE_FUNCTION_SERIALISED(VkResult, vkCreateSampler, VkDevice device,
                                 const VkSamplerCreateInfo *pCreateInfo,
                                 const VkAllocationCallbacks *, VkSampler *pSampler);
@@ -3378,3 +3469,7 @@ INSTANTIATE_FUNCTION_SERIALISED(void, SetCommandAnnotation, VkCommandBuffer cmd,
 INSTANTIATE_FUNCTION_SERIALISED(void, SetQueueAnnotation, VkQueue queue, rdcstr key,
                                 RENDERDOC_AnnotationType valueType, uint32_t valueVectorWidth,
                                 RENDERDOC_AnnotationValue value);
+
+INSTANTIATE_FUNCTION_SERIALISED(VkResult, vkRegisterCustomBorderColorEXT, VkDevice device,
+                                const VkSamplerCustomBorderColorCreateInfoEXT *pBorderColor,
+                                VkBool32 requestIndex, uint32_t *pIndex);

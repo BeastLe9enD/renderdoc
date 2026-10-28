@@ -564,7 +564,8 @@
   DeclExt(NV_device_diagnostic_checkpoints);           \
   DeclExt(EXT_depth_bias_control);                     \
   DeclExt(EXT_present_timing);                         \
-  DeclExt(KHR_device_address_commands);
+  DeclExt(KHR_device_address_commands);                \
+  DeclExt(EXT_descriptor_heap);
 
 // for simplicity and since the check itself is platform agnostic,
 // these aren't protected in platform defines
@@ -715,7 +716,8 @@
   CheckExt(NV_device_diagnostic_checkpoints, VKXX);           \
   CheckExt(EXT_depth_bias_control, VKXX);                     \
   CheckExt(EXT_present_timing, VKXX);                         \
-  CheckExt(KHR_device_address_commands, VKXX);
+  CheckExt(KHR_device_address_commands, VKXX);                \
+  CheckExt(EXT_descriptor_heap, VKXX);
 
 #define HookInitVulkanInstanceExts_PhysDev()                                                         \
   HookInitExtension(KHR_surface, GetPhysicalDeviceSurfaceSupportKHR);                                \
@@ -757,6 +759,7 @@
   HookInitExtension(KHR_get_display_properties2, GetPhysicalDeviceDisplayPlaneProperties2KHR);       \
   HookInitExtension(EXT_sample_locations, GetPhysicalDeviceMultisamplePropertiesEXT);                \
   HookInitExtension(EXT_calibrated_timestamps, GetPhysicalDeviceCalibrateableTimeDomainsEXT);        \
+  HookInitExtension(EXT_descriptor_heap, GetPhysicalDeviceDescriptorSizeEXT);                        \
   HookInitExtension(KHR_performance_query,                                                           \
                     EnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR);                  \
   HookInitExtension(KHR_performance_query, GetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR);   \
@@ -824,6 +827,7 @@
   HookInitExtension(KHR_get_display_properties2, GetDisplayPlaneCapabilities2KHR);                   \
   HookInitExtension(EXT_sample_locations, GetPhysicalDeviceMultisamplePropertiesEXT);                \
   HookInitExtension(EXT_calibrated_timestamps, GetPhysicalDeviceCalibrateableTimeDomainsEXT);        \
+  HookInitExtension(EXT_descriptor_heap, GetPhysicalDeviceDescriptorSizeEXT);                        \
   HookInitExtension(EXT_headless_surface, CreateHeadlessSurfaceEXT);                                 \
   HookInitExtension(KHR_performance_query,                                                           \
                     EnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR);                  \
@@ -1116,6 +1120,14 @@
   HookInitExtension(EXT_descriptor_buffer, GetImageViewOpaqueCaptureDescriptorDataEXT);              \
   HookInitExtension(EXT_descriptor_buffer, GetSamplerOpaqueCaptureDescriptorDataEXT);                \
   HookInitExtension(EXT_descriptor_buffer, GetAccelerationStructureOpaqueCaptureDescriptorDataEXT);  \
+  HookInitExtension(EXT_descriptor_heap, WriteSamplerDescriptorsEXT);                                \
+  HookInitExtension(EXT_descriptor_heap, WriteResourceDescriptorsEXT);                               \
+  HookInitExtension(EXT_descriptor_heap, CmdBindSamplerHeapEXT);                                     \
+  HookInitExtension(EXT_descriptor_heap, CmdBindResourceHeapEXT);                                    \
+  HookInitExtension(EXT_descriptor_heap, CmdPushDataEXT);                                            \
+  HookInitExtension(EXT_descriptor_heap, GetImageOpaqueCaptureDataEXT);                              \
+  HookInitExtension(EXT_descriptor_heap, RegisterCustomBorderColorEXT);                              \
+  HookInitExtension(EXT_descriptor_heap, UnregisterCustomBorderColorEXT);                            \
   HookInitPromotedExtension(KHR_map_memory2, MapMemory2, KHR);                                       \
   HookInitPromotedExtension(KHR_map_memory2, UnmapMemory2, KHR);                                     \
   HookInitExtension(KHR_present_wait2, WaitForPresent2KHR);                                          \
@@ -2103,6 +2115,25 @@
               const VkSamplerCaptureDescriptorDataInfoEXT *, pInfo, void *, pData);                  \
   HookDefine3(VkResult, vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT, VkDevice, device,  \
               const VkAccelerationStructureCaptureDescriptorDataInfoEXT *, pInfo, void *, pData);    \
+  HookDefine4(VkResult, vkWriteSamplerDescriptorsEXT, VkDevice, device, uint32_t, samplerCount,      \
+              const VkSamplerCreateInfo *, pSamplers, const VkHostAddressRangeEXT *, pDescriptors);  \
+  HookDefine4(VkResult, vkWriteResourceDescriptorsEXT, VkDevice, device, uint32_t, resourceCount,    \
+              const VkResourceDescriptorInfoEXT *, pResources, const VkHostAddressRangeEXT *,        \
+              pDescriptors);                                                                         \
+  HookDefine2(void, vkCmdBindSamplerHeapEXT, VkCommandBuffer, commandBuffer,                         \
+              const VkBindHeapInfoEXT *, pBindInfo);                                                 \
+  HookDefine2(void, vkCmdBindResourceHeapEXT, VkCommandBuffer, commandBuffer,                        \
+              const VkBindHeapInfoEXT *, pBindInfo);                                                 \
+  HookDefine2(void, vkCmdPushDataEXT, VkCommandBuffer, commandBuffer, const VkPushDataInfoEXT *,     \
+              pPushDataInfo);                                                                        \
+  HookDefine4(VkResult, vkGetImageOpaqueCaptureDataEXT, VkDevice, device, uint32_t, imageCount,      \
+              const VkImage *, pImages, VkHostAddressRangeEXT *, pDatas);                            \
+  HookDefine2(VkDeviceSize, vkGetPhysicalDeviceDescriptorSizeEXT, VkPhysicalDevice,                  \
+              physicalDevice, VkDescriptorType, descriptorType);                                     \
+  HookDefine4(VkResult, vkRegisterCustomBorderColorEXT, VkDevice, device,                            \
+              const VkSamplerCustomBorderColorCreateInfoEXT *, pBorderColor, VkBool32,               \
+              requestIndex, uint32_t *, pIndex);                                                     \
+  HookDefine2(void, vkUnregisterCustomBorderColorEXT, VkDevice, device, uint32_t, index);            \
   HookDefine3(VkResult, vkMapMemory2, VkDevice, device, const VkMemoryMapInfo *, pMemoryMapInfo,     \
               void **, ppData);                                                                      \
   HookDefine2(void, vkUnmapMemory2, VkDevice, device, const VkMemoryUnmapInfo *, pMemoryUnmapInfo);  \

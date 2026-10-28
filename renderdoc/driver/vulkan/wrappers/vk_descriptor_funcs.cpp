@@ -3665,6 +3665,52 @@ void WrappedVulkan::vkGetDescriptorEXT(VkDevice device, const VkDescriptorGetInf
   }
 }
 
+VkResult WrappedVulkan::vkWriteSamplerDescriptorsEXT(VkDevice device, uint32_t samplerCount,
+                                                     const VkSamplerCreateInfo *pSamplers,
+                                                     const VkHostAddressRangeEXT *pDescriptors)
+{
+  // descriptors are written directly into memory, which we capture as normal. Since we enable
+  // descriptorHeapCaptureReplay the descriptors written are replayable as-is.
+  size_t memSize = 0;
+  for(uint32_t i = 0; i < samplerCount; i++)
+    memSize += GetNextPatchSize(&pSamplers[i]);
+  byte *tempMem = GetTempMemory(memSize);
+
+  rdcarray<VkSamplerCreateInfo> unwrappedSamplers;
+  unwrappedSamplers.resize(samplerCount);
+  for(uint32_t i = 0; i < samplerCount; i++)
+    unwrappedSamplers[i] = *UnwrapStructAndChain(m_State, tempMem, &pSamplers[i]);
+
+  return ObjDisp(device)->WriteSamplerDescriptorsEXT(Unwrap(device), samplerCount,
+                                                     unwrappedSamplers.data(), pDescriptors);
+}
+
+VkResult WrappedVulkan::vkWriteResourceDescriptorsEXT(VkDevice device, uint32_t resourceCount,
+                                                      const VkResourceDescriptorInfoEXT *pResources,
+                                                      const VkHostAddressRangeEXT *pDescriptors)
+{
+  // as with samplers, the descriptors are written directly into memory and we rely on
+  // descriptorHeapCaptureReplay to make them valid on replay. Images are referenced by handle in
+  // the view create info, but all images are force-referenced when descriptor heaps are in use.
+  size_t memSize = 0;
+  for(uint32_t i = 0; i < resourceCount; i++)
+    memSize += GetNextPatchSize(&pResources[i]);
+  byte *tempMem = GetTempMemory(memSize);
+
+  rdcarray<VkResourceDescriptorInfoEXT> unwrappedResources;
+  unwrappedResources.resize(resourceCount);
+  for(uint32_t i = 0; i < resourceCount; i++)
+  {
+    VkBaseInStructure dummy = {};
+    dummy.pNext = (const VkBaseInStructure *)&pResources[i];
+    UnwrapNextChain(m_State, "VkResourceDescriptorInfoEXT", tempMem, &dummy);
+    unwrappedResources[i] = *(const VkResourceDescriptorInfoEXT *)dummy.pNext;
+  }
+
+  return ObjDisp(device)->WriteResourceDescriptorsEXT(Unwrap(device), resourceCount,
+                                                      unwrappedResources.data(), pDescriptors);
+}
+
 INSTANTIATE_FUNCTION_SERIALISED(VkResult, vkCreateDescriptorSetLayout, VkDevice device,
                                 const VkDescriptorSetLayoutCreateInfo *pCreateInfo,
                                 const VkAllocationCallbacks *, VkDescriptorSetLayout *pSetLayout);

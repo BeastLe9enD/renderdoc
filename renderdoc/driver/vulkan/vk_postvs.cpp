@@ -6334,6 +6334,13 @@ void VulkanReplay::InitPostVSBuffers(uint32_t eventId, VulkanRenderState state)
     return;
   }
 
+  if(m_pDriver->UsesDescriptorHeap(state, false))
+  {
+    ret.gsout.status = ret.vsout.status = ret.meshout.status = ret.taskout.status =
+        "Fetching shader output is not yet supported with VK_EXT_descriptor_heap";
+    return;
+  }
+
   const ActionDescription *action = m_pDriver->GetAction(eventId);
 
   if(action == NULL)

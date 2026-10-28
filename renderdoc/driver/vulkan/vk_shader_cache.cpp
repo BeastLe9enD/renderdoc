@@ -634,6 +634,8 @@ void VulkanShaderCache::MakeGraphicsPipelineInfo(VkGraphicsPipelineCreateInfo &p
 
   static VkPipelineShaderStageRequiredSubgroupSizeCreateInfo reqSubgroupSize[NumShaderStages] = {};
   static VkPipelineRobustnessCreateInfo shaderRobustness[NumShaderStages] = {};
+  static VkShaderDescriptorSetAndBindingMappingInfoEXT heapMappingInfo[NumShaderStages] = {};
+  static rdcarray<VkDescriptorSetAndBindingMappingEXT> heapMappings[NumShaderStages];
 
   // reserve space for spec constants
   for(uint32_t i = 0; i < NumShaderStages; i++)
@@ -667,6 +669,18 @@ void VulkanShaderCache::MakeGraphicsPipelineInfo(VkGraphicsPipelineCreateInfo &p
         shaderRobustness[i].sType = VK_STRUCTURE_TYPE_PIPELINE_ROBUSTNESS_CREATE_INFO;
         shaderRobustness[i].pNext = stages[stageCount].pNext;
         stages[stageCount].pNext = &shaderRobustness;
+      }
+
+      if(!pipeInfo.shaders[i].heapMappings.empty())
+      {
+        pipeInfo.shaders[i].GetHeapMappings(heapMappings[i]);
+
+        heapMappingInfo[i].sType =
+            VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT;
+        heapMappingInfo[i].mappingCount = heapMappings[i].count();
+        heapMappingInfo[i].pMappings = heapMappings[i].data();
+        heapMappingInfo[i].pNext = stages[stageCount].pNext;
+        stages[stageCount].pNext = &heapMappingInfo[i];
       }
 
       if(!pipeInfo.shaders[i].specialization.empty())
@@ -1261,6 +1275,21 @@ void VulkanShaderCache::MakeComputePipelineInfo(VkComputePipelineCreateInfo &pip
     stage.pNext = &robustness;
   }
 
+  static VkShaderDescriptorSetAndBindingMappingInfoEXT heapMappingInfo = {
+      VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT,
+  };
+  static rdcarray<VkDescriptorSetAndBindingMappingEXT> heapMappings;
+
+  if(!pipeInfo.shaders[i].heapMappings.empty())
+  {
+    pipeInfo.shaders[i].GetHeapMappings(heapMappings);
+
+    heapMappingInfo.mappingCount = heapMappings.count();
+    heapMappingInfo.pMappings = heapMappings.data();
+    heapMappingInfo.pNext = stage.pNext;
+    stage.pNext = &heapMappingInfo;
+  }
+
   VkComputePipelineCreateInfo ret = {
       VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
       NULL,
@@ -1387,5 +1416,21 @@ void VulkanShaderCache::MakeShaderObjectInfo(VkShaderCreateInfoEXT &shadCreateIn
     customResCreate.pNext = ret.pNext;
     ret.pNext = &customResCreate;
   }
+
+  static VkShaderDescriptorSetAndBindingMappingInfoEXT heapMappingInfo = {
+      VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT,
+  };
+  static rdcarray<VkDescriptorSetAndBindingMappingEXT> heapMappings;
+
+  if(!shadInfo.shad.heapMappings.empty())
+  {
+    shadInfo.shad.GetHeapMappings(heapMappings);
+
+    heapMappingInfo.mappingCount = heapMappings.count();
+    heapMappingInfo.pMappings = heapMappings.data();
+    heapMappingInfo.pNext = ret.pNext;
+    ret.pNext = &heapMappingInfo;
+  }
+
   shadCreateInfo = ret;
 }

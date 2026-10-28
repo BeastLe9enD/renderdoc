@@ -1169,6 +1169,10 @@ static const VkExtensionProperties supportedExtensions[] = {
         VK_EXT_DESCRIPTOR_BUFFER_SPEC_VERSION,
     },
     {
+        VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME,
+        VK_EXT_DESCRIPTOR_HEAP_SPEC_VERSION,
+    },
+    {
         VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
         VK_EXT_DESCRIPTOR_INDEXING_SPEC_VERSION,
     },
@@ -2510,6 +2514,53 @@ VkResult WrappedVulkan::FilterDeviceExtensionProperties(VkPhysicalDevice physDev
         return true;
       }
 
+      if(!strcmp(ext.extensionName, VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME))
+      {
+        // require GPDP2
+        if(instDevInfo->ext_KHR_get_physical_device_properties2)
+        {
+          VkPhysicalDeviceDescriptorHeapFeaturesEXT heapFeats = {
+              VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT};
+          VkPhysicalDeviceBufferDeviceAddressFeatures bufaddr = {
+              VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
+          heapFeats.pNext = &bufaddr;
+          VkPhysicalDeviceFeatures2 baseFeats = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+          baseFeats.pNext = &heapFeats;
+          ObjDisp(physDev)->GetPhysicalDeviceFeatures2(Unwrap(physDev), &baseFeats);
+
+          // descriptors in heaps are opaque bytes in memory which we capture and replay
+          // verbatim, so we need them to be stable between capture and replay
+          if(!heapFeats.descriptorHeapCaptureReplay)
+          {
+            if(!filterWarned)
+            {
+              RDCWARN(
+                  "VkPhysicalDeviceDescriptorHeapFeaturesEXT.descriptorHeapCaptureReplay "
+                  "is false, can't support capture of VK_EXT_descriptor_heap");
+            }
+            return true;
+          }
+
+          // buffer descriptors and the heaps themselves are referenced by address
+          if(!bufaddr.bufferDeviceAddressCaptureReplay)
+          {
+            if(!filterWarned)
+            {
+              RDCWARN(
+                  "VkPhysicalDeviceBufferDeviceAddressFeatures.bufferDeviceAddressCaptureReplay "
+                  "is false, can't support capture of VK_EXT_descriptor_heap");
+            }
+            return true;
+          }
+
+          // supported
+          return false;
+        }
+
+        // if it wasn't supported, remove the extension
+        return true;
+      }
+
       if(!strcmp(ext.extensionName, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME))
       {
         // require GPDP2
@@ -2948,7 +2999,7 @@ bool WrappedVulkan::EndFrameCapture(DeviceOwnedWindow devWnd)
                                                         eFrameRef_Read);
 
     // we're using the fake image for descriptor buffers, which is in layout general not present
-    if(DescriptorBuffers())
+    if(DescriptorsInMemory())
       swapLayout = VK_IMAGE_LAYOUT_GENERAL;
   }
   else
@@ -2976,7 +3027,7 @@ bool WrappedVulkan::EndFrameCapture(DeviceOwnedWindow devWnd)
         GetResourceManager()->MarkResourceFrameReferenced(
             GetResID(swapInfo.images[i].userSwapImage), eFrameRef_Read);
 
-      if(DescriptorBuffers())
+      if(DescriptorsInMemory())
         swapLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
     else if(VRBackbufferRecord)
@@ -5126,6 +5177,15 @@ bool WrappedVulkan::ProcessChunk(ReadSerialiser &ser, VulkanChunk chunk)
     case VulkanChunk::vkCmdDrawIndirectCount2KHR:
       return Serialise_vkCmdDrawIndirectCount2KHR(ser, VK_NULL_HANDLE, NULL);
 
+    case VulkanChunk::vkCmdBindSamplerHeapEXT:
+      return Serialise_vkCmdBindSamplerHeapEXT(ser, VK_NULL_HANDLE, NULL);
+    case VulkanChunk::vkCmdBindResourceHeapEXT:
+      return Serialise_vkCmdBindResourceHeapEXT(ser, VK_NULL_HANDLE, NULL);
+    case VulkanChunk::vkCmdPushDataEXT:
+      return Serialise_vkCmdPushDataEXT(ser, VK_NULL_HANDLE, NULL);
+    case VulkanChunk::vkRegisterCustomBorderColorEXT:
+      return Serialise_vkRegisterCustomBorderColorEXT(ser, VK_NULL_HANDLE, NULL, VK_FALSE, NULL);
+
     // chunks that are reserved but not yet serialised
     case VulkanChunk::vkResetCommandPool:
     case VulkanChunk::vkCreateDepthTargetView:
@@ -6346,6 +6406,29 @@ void WrappedVulkan::AddAction(const ActionDescription &a)
     AddUsage(node);
 }
 
+bool WrappedVulkan::UsesDescriptorHeap(const VulkanRenderState &state, bool compute)
+{
+  if(!DescriptorHeaps())
+    return false;
+
+  const VulkanStatePipeline &pipeState = (compute ? state.compute : state.graphics);
+
+  if(pipeState.shaderObject)
+  {
+    for(ResourceId shaderObj : state.shaderObjects)
+    {
+      auto it = m_CreationInfo.m_ShaderObject.find(shaderObj);
+      if(it != m_CreationInfo.m_ShaderObject.end() && it->second.UsesDescriptorHeap())
+        return true;
+    }
+
+    return false;
+  }
+
+  auto it = m_CreationInfo.m_Pipeline.find(pipeState.pipeline);
+  return it != m_CreationInfo.m_Pipeline.end() && it->second.UsesDescriptorHeap();
+}
+
 void WrappedVulkan::AddUsage(VulkanEventNode &eventNode)
 {
   ActionDescription &action = eventNode.action;
@@ -6396,6 +6479,11 @@ void WrappedVulkan::AddUsage(VulkanEventNode &eventNode)
 
   //////////////////////////////
   // Shaders
+
+  // descriptor heaps don't use descriptor sets at all, and like descriptor buffers we can't
+  // generate usage for descriptors that are only stored in memory
+  if(UsesDescriptorHeap(state, compute))
+    return;
 
   if(pipeState.UsingDescBufs())
   {

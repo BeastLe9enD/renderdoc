@@ -1298,8 +1298,12 @@ VkResult WrappedVulkan::vkCreateComputePipelines(VkDevice device, VkPipelineCach
           }
         }
 
-        VkResourceRecord *layoutrecord = GetRecord(pCreateInfos[i].layout);
-        record->AddParent(layoutrecord);
+        // pipelines using VK_EXT_descriptor_heap don't have a layout
+        if(pCreateInfos[i].layout != VK_NULL_HANDLE)
+        {
+          VkResourceRecord *layoutrecord = GetRecord(pCreateInfos[i].layout);
+          record->AddParent(layoutrecord);
+        }
 
         VkResourceRecord *modulerecord = GetRecord(pCreateInfos[i].stage.module);
         if(modulerecord)

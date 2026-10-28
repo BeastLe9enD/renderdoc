@@ -5584,6 +5584,12 @@ ShaderDebugTrace *VulkanReplay::DebugVertex(uint32_t eventId, uint32_t vertid, u
     return new ShaderDebugTrace();
   }
 
+  if(m_pDriver->UsesDescriptorHeap(state, false))
+  {
+    RDCWARN("Shader debugging is not yet supported with VK_EXT_descriptor_heap");
+    return new ShaderDebugTrace();
+  }
+
   uint32_t vertOffset = 0, instOffset = 0;
   if(!(action->flags & ActionFlags::Indexed))
     vertOffset = action->vertexOffset;
@@ -6127,6 +6133,12 @@ ShaderDebugTrace *VulkanReplay::DebugPixel(uint32_t eventId, uint32_t x, uint32_
   if(!(action->flags & (ActionFlags::MeshDispatch | ActionFlags::Drawcall)))
   {
     RDCLOG("No drawcall selected");
+    return new ShaderDebugTrace();
+  }
+
+  if(m_pDriver->UsesDescriptorHeap(state, false))
+  {
+    RDCWARN("Shader debugging is not yet supported with VK_EXT_descriptor_heap");
     return new ShaderDebugTrace();
   }
 
@@ -6711,6 +6723,12 @@ ShaderDebugTrace *VulkanReplay::DebugComputeCommon(ShaderStage stage, uint32_t e
       RDCLOG("No dispatch selected");
       return new ShaderDebugTrace();
     }
+  }
+
+  if(m_pDriver->UsesDescriptorHeap(state, stage == ShaderStage::Compute))
+  {
+    RDCWARN("Shader debugging is not yet supported with VK_EXT_descriptor_heap");
+    return new ShaderDebugTrace();
   }
 
   // get ourselves in pristine state before this dispatch (without any side effects it may have had)

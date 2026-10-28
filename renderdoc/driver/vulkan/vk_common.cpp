@@ -433,6 +433,10 @@ bool VkInitParams::IsSupportedVersion(uint64_t ver)
   if(ver == CurrentVersion)
     return true;
 
+  // 0x20 -> 0x21 - added descriptor heap opaque capture data for swapchains
+  if(ver == 0x20)
+    return true;
+
   // 0x19 -> 0x20 - converted serialised page table to be 64-bit
   if(ver == 0x19)
     return true;
@@ -1191,6 +1195,86 @@ void OpaqueDataForSerialising::addForSerialising(VkBaseInStructure *serialisedCr
   if(existing)
   {
     RDCASSERT(memcmp(data, existing->opaqueCaptureDescriptorData, sz) == 0);
+  }
+  else
+  {
+    pNext = serialisedCreateInfo->pNext;
+    serialisedCreateInfo->pNext = (VkBaseInStructure *)this;
+  }
+}
+
+bool IsImageDescriptorType(VkDescriptorType type)
+{
+  switch(type)
+  {
+    case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+    case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+    case VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM:
+    case VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM: return true;
+    default: break;
+  }
+
+  return false;
+}
+
+const VkSamplerCreateInfo **GetEmbeddedSampler(VkDescriptorSetAndBindingMappingEXT &mapping)
+{
+  static const VkSamplerCreateInfo *dummy = NULL;
+  dummy = NULL;
+
+  switch(mapping.source)
+  {
+    case VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT:
+      return &mapping.sourceData.constantOffset.pEmbeddedSampler;
+    case VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_PUSH_INDEX_EXT:
+      return &mapping.sourceData.pushIndex.pEmbeddedSampler;
+    case VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_INDIRECT_INDEX_EXT:
+      return &mapping.sourceData.indirectIndex.pEmbeddedSampler;
+    case VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_INDIRECT_INDEX_ARRAY_EXT:
+      return &mapping.sourceData.indirectIndexArray.pEmbeddedSampler;
+    case VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_SHADER_RECORD_INDEX_EXT:
+      return &mapping.sourceData.shaderRecordIndex.pEmbeddedSampler;
+    default: break;
+  }
+
+  // other sources don't have an embedded sampler, return a pointer to a NULL so callers don't need
+  // to check
+  return &dummy;
+}
+
+void HeapOpaqueDataForSerialising::fillUnwrapped(VkDevice wrappedDevice, VkImage unwrappedImage,
+                                                 size_t size)
+{
+  data.resize(size);
+
+  VkHostAddressRangeEXT dst = {data.data(), data.size()};
+
+  VkResult opaqueQuery =
+      ObjDisp(wrappedDevice)
+          ->GetImageOpaqueCaptureDataEXT(Unwrap(wrappedDevice), 1, &unwrappedImage, &dst);
+  if(opaqueQuery != VK_SUCCESS)
+    RDCERR("Couldn't get opaque capture/replay data: %s", ToStr(opaqueQuery).c_str());
+
+  range.address = data.data();
+  range.size = data.size();
+}
+
+void HeapOpaqueDataForSerialising::fill(VkDevice wrappedDevice, VkImage wrappedImage, size_t size)
+{
+  fillUnwrapped(wrappedDevice, Unwrap(wrappedImage), size);
+}
+
+void HeapOpaqueDataForSerialising::addForSerialising(VkBaseInStructure *serialisedCreateInfo)
+{
+  VkOpaqueCaptureDataCreateInfoEXT *existing = (VkOpaqueCaptureDataCreateInfoEXT *)FindNextStruct(
+      serialisedCreateInfo, VK_STRUCTURE_TYPE_OPAQUE_CAPTURE_DATA_CREATE_INFO_EXT);
+
+  if(existing)
+  {
+    RDCASSERT(existing->pData && existing->pData->size == range.size &&
+              memcmp(existing->pData->address, range.address, range.size) == 0);
   }
   else
   {

@@ -1526,6 +1526,11 @@ bool VulkanReplay::FetchShaderFeedback(uint32_t eventId)
     return false;
   }
 
+  // shader feedback requires binding our own descriptors, which is not yet supported with
+  // VK_EXT_descriptor_heap
+  if(m_pDriver->UsesDescriptorHeap(state, result.compute))
+    return false;
+
   const VulkanCreationInfo::Pipeline &pipeInfo = creationInfo.m_Pipeline[pipe.pipeline];
 
   const VulkanCreationInfo::ShaderEntry *shaderEntries[NumShaderStages] = {};

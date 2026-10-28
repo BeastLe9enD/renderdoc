@@ -326,7 +326,7 @@ bool WrappedVulkan::Serialise_vkAllocateMemory(SerialiserType &ser, VkDevice dev
           //
           // instead we do the more dangerous thing of adjusting the allocation size to match the
           // image's memory requirements and keep the dedicated allocation.
-          if(AccelerationStructures() || DescriptorBuffers())
+          if(AccelerationStructures() || DescriptorsInMemory())
             patched.allocationSize = mrq.size;
           else
             RemoveNextStruct(&patched, VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO);
@@ -467,7 +467,7 @@ bool WrappedVulkan::Serialise_vkAllocateMemory(SerialiserType &ser, VkDevice dev
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         };
 
-        if(DescriptorBuffers())
+        if(DescriptorsInMemory())
         {
           bufInfo.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
         }
@@ -482,12 +482,12 @@ bool WrappedVulkan::Serialise_vkAllocateMemory(SerialiserType &ser, VkDevice dev
         ObjDisp(device)->GetBufferMemoryRequirements(Unwrap(device), buf, &mrq);
 
         // Can't create a memory-spanning buffer for this allocation.
-        // For descriptor buffers try again if that is enabled as those memory types are sometimes unique.
-        if((((1 << AllocateInfo.memoryTypeIndex) & mrq.memoryTypeBits) == 0) && DescriptorBuffers())
+        // For descriptor buffers/heaps try again if that is enabled as those memory types are sometimes unique.
+        if((((1 << AllocateInfo.memoryTypeIndex) & mrq.memoryTypeBits) == 0) && DescriptorsInMemory())
         {
           ObjDisp(device)->DestroyBuffer(Unwrap(device), buf, NULL);
 
-          bufInfo.usage |= VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT;
+          bufInfo.usage |= DescriptorMemoryBufferUsage();
 
           ret = ObjDisp(device)->CreateBuffer(Unwrap(device), &bufInfo, NULL, &buf);
           RDCASSERTEQUAL(ret, VK_SUCCESS);
@@ -551,7 +551,7 @@ VkResult WrappedVulkan::vkAllocateMemory(VkDevice device, const VkMemoryAllocate
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
     };
 
-    if(DescriptorBuffers())
+    if(DescriptorsInMemory())
     {
       bufInfo.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
       bufInfo.flags |= VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT;
@@ -598,7 +598,7 @@ VkResult WrappedVulkan::vkAllocateMemory(VkDevice device, const VkMemoryAllocate
   // means that when RT is enabled ALL MEMORY IN THE ENTIRE PROGRAM must be marked as BDA just in
   // case.
   bool forceBDA = false;
-  if(IsCaptureMode(m_State) && (AccelerationStructures() || DescriptorBuffers()))
+  if(IsCaptureMode(m_State) && (AccelerationStructures() || DescriptorsInMemory()))
   {
     // force BDA flag when creating, by adding the struct if needed
     forceBDA = true;
@@ -749,10 +749,10 @@ VkResult WrappedVulkan::vkAllocateMemory(VkDevice device, const VkMemoryAllocate
         wholeMemBuf = VK_NULL_HANDLE;
 
         // can't create a memory-spanning buffer for this allocation. Try again with descriptor
-        // buffers if that is enabled as those memory types are sometimes unique.
-        if(DescriptorBuffers())
+        // buffers/heaps if that is enabled as those memory types are sometimes unique.
+        if(DescriptorsInMemory())
         {
-          bufInfo.usage |= VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT;
+          bufInfo.usage |= DescriptorMemoryBufferUsage();
 
           ret = ObjDisp(device)->CreateBuffer(Unwrap(device), &bufInfo, NULL, &wholeMemBuf);
           RDCASSERTEQUAL(ret, VK_SUCCESS);
@@ -3026,11 +3026,19 @@ VkResult WrappedVulkan::vkCreateImage(VkDevice device, const VkImageCreateInfo *
       VkImageCreateInfo serialisedCreateInfo = *pCreateInfo;
 
       OpaqueDataForSerialising opaqueData;
+      HeapOpaqueDataForSerialising heapOpaqueData;
 
       if(DescriptorBuffers())
       {
         opaqueData.fill(device, *pImage, m_DescriptorBufferProperties);
         opaqueData.addForSerialising((VkBaseInStructure *)&serialisedCreateInfo);
+      }
+
+      if(DescriptorHeaps() && m_DescriptorHeapProperties.imageCaptureReplayOpaqueDataSize > 0)
+      {
+        heapOpaqueData.fill(device, *pImage,
+                            m_DescriptorHeapProperties.imageCaptureReplayOpaqueDataSize);
+        heapOpaqueData.addForSerialising((VkBaseInStructure *)&serialisedCreateInfo);
       }
 
       {
@@ -3045,9 +3053,9 @@ VkResult WrappedVulkan::vkCreateImage(VkDevice device, const VkImageCreateInfo *
       VkResourceRecord *record = GetResourceManager()->AddResourceRecord(*pImage);
       record->AddChunk(chunk);
 
-      // can't differentiate whether this image will be used with descriptor buffers, must force
-      // reference all images
-      if(DescriptorBuffers())
+      // can't differentiate whether this image will be used with descriptor buffers or heaps, must
+      // force reference all images
+      if(DescriptorsInMemory())
         AddForcedReference(record);
 
       record->resInfo = new ResourceInfo();
@@ -4122,7 +4130,7 @@ VkResult WrappedVulkan::vkCreateAccelerationStructureKHR(
 
       GetResourceManager()->MarkDirtyResource(id);
       if(pCreateInfo->type == VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR ||
-         pCreateInfo->type == VK_ACCELERATION_STRUCTURE_TYPE_GENERIC_KHR || DescriptorBuffers())
+         pCreateInfo->type == VK_ACCELERATION_STRUCTURE_TYPE_GENERIC_KHR || DescriptorsInMemory())
       {
         // We force reference BLASs as it is not feasible to track at the API level which TLASs
         // reference them.  We force ref generics too as they could bottom or top level so we
@@ -4285,7 +4293,7 @@ VkResult WrappedVulkan::vkCreateAccelerationStructure2KHR(
 
       GetResourceManager()->MarkDirtyResource(id);
       if(pCreateInfo->type == VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR ||
-         pCreateInfo->type == VK_ACCELERATION_STRUCTURE_TYPE_GENERIC_KHR || DescriptorBuffers())
+         pCreateInfo->type == VK_ACCELERATION_STRUCTURE_TYPE_GENERIC_KHR || DescriptorsInMemory())
       {
         // We force reference BLASs as it is not feasible to track at the API level which TLASs
         // reference them.  We force ref generics too as they could bottom or top level so we

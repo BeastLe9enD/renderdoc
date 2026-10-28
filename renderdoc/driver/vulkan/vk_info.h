@@ -254,6 +254,15 @@ struct VulkanCreationInfo
     // VkPipelineShaderStageRequiredSubgroupSizeCreateInfo
     uint32_t requiredSubgroupSize = 0;
 
+    // VkShaderDescriptorSetAndBindingMappingInfoEXT. Embedded samplers are stored separately, and
+    // any next chains on them or the mappings are not preserved.
+    rdcarray<VkDescriptorSetAndBindingMappingEXT> heapMappings;
+    rdcarray<VkSamplerCreateInfo> heapEmbeddedSamplers;
+
+    void InitHeapMappings(const void *stageInfo);
+    // fills out the mappings with embedded sampler pointers pointing into heapEmbeddedSamplers
+    void GetHeapMappings(rdcarray<VkDescriptorSetAndBindingMappingEXT> &mappings) const;
+
     // VkPipelineRobustnessCreateInfo
     VkPipelineRobustnessBufferBehavior storageBufferRobustness;
     VkPipelineRobustnessBufferBehavior uniformBufferRobustness;
@@ -269,6 +278,11 @@ struct VulkanCreationInfo
 
   struct Pipeline
   {
+    bool UsesDescriptorHeap() const
+    {
+      return (flags & VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT) != 0;
+    }
+
     void Init(VulkanResourceManager *resourceMan, VulkanCreationInfo &info, ResourceId id,
               const VkGraphicsPipelineCreateInfo *pCreateInfo);
     void Init(VulkanResourceManager *resourceMan, VulkanCreationInfo &info, ResourceId id,
@@ -492,6 +506,11 @@ struct VulkanCreationInfo
     ShaderEntry shad;
 
     VkShaderCreateFlagsEXT flags;
+
+    bool UsesDescriptorHeap() const
+    {
+      return (flags & VK_SHADER_CREATE_DESCRIPTOR_HEAP_BIT_EXT) != 0;
+    }
 
     VkShaderStageFlags nextStage;
 
